@@ -1,0 +1,19 @@
+# ---- NEVER commit real bank data ----
+real/
+*.db
+data/transactions.csv
+
+# ---- secrets (API keys) ----
+.env
+.streamlit/secrets.toml
+
+# ---- large / generated files ----
+models/
+*.zip
+.venv/
+__pycache__/
+*.pyc
+
+# ---- personal study notes (mention private data) ----
+DAY*_GUIDE.md
+data/mini_example.*
