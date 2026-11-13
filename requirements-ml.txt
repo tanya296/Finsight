@@ -1,0 +1,6 @@
+# Extra libraries for running the fine-tuned model locally
+# Install CPU PyTorch first:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+transformers
+peft
+accelerate

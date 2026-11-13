@@ -87,8 +87,9 @@ Python 3.10+, Windows/macOS/Linux.
 ```bash
 python -m venv .venv
 .venv\Scripts\activate                    # macOS/Linux: source .venv/bin/activate
-pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # only for the fine-tuned model
+pip install -r requirements-ml.txt                                       # only for the fine-tuned model
 cp .env.example .env                      # then put your free Groq key in .env
 streamlit run app.py
 ```

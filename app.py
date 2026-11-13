@@ -24,6 +24,20 @@ from parse_statement import parse_pdf
 REAL_DB = "data/transactions.db"      # your real statement (gitignored)
 DEMO_DB = "data/demo.db"              # the fake demo statement, kept separate
 DEMO_PDF = "data/fake_statement.pdf"
+DEMO_QUESTION_LIMIT = 10              # per visitor, in the public demo
+
+
+def secret(name, default=""):
+    """Read a Streamlit Cloud secret; works locally too (where there are none)."""
+    try:
+        return str(st.secrets.get(name, default))
+    except Exception:
+        return default
+
+
+# PUBLIC DEMO MODE: set DEMO_MODE = "true" in Streamlit Cloud secrets.
+# Fake statement only, no uploads, no local model, limited questions.
+DEMO_MODE = (secret("DEMO_MODE") or os.environ.get("DEMO_MODE", "")).lower() == "true"
 
 st.set_page_config(page_title="FinSight", page_icon="◆", layout="wide")
 
@@ -219,28 +233,48 @@ def head(text, sub=None):
 # ---------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------
+def build_demo_db():
+    """Public demo: parse the FAKE statement and use its known labels (the fine-tuned model
+    needs ~3 GB RAM and runs locally, so it can't run on free cloud hosting)."""
+    df = parse_pdf(DEMO_PDF)
+    df["category"] = pd.read_csv("data/fake_statement_truth.csv").true_category.values
+    df["category_source"] = "dataset label"
+    save(df, DEMO_DB)
+
+
 with st.sidebar:
-    st.markdown("#### Data")
-    source = st.radio("Data", ["My statement", "Fake demo"], label_visibility="collapsed",
-                      help="The demo uses its own database, so it never overwrites your real data.")
-    DB = REAL_DB if source == "My statement" else DEMO_DB
-    st.markdown("#### Categoriser")
-    mode = st.radio("Categoriser", ["Hybrid (fine-tuned model)", "Rules only (instant)"],
-                    label_visibility="collapsed",
-                    help="Hybrid: clear-cut rules + your fine-tuned model. Accurate, but ~15–25 s per "
-                         "transaction on a laptop CPU.")
-    model_name = st.selectbox("Model", ["qwen-1.5b", "qwen-0.5b"],
-                              help="0.5B is faster on a laptop but less accurate (73% vs 82% on unseen shops).")
-    st.markdown("---")
-    st.caption("Runs locally. The Ask tab sends only your question and the column names to the "
-               "language model, never your transactions.")
+    if DEMO_MODE:
+        source, DB, mode, model_name = "Fake demo", DEMO_DB, "Rules only", "qwen-1.5b"
+        if not Path(DEMO_DB).exists():
+            build_demo_db()
+        st.markdown("#### Public demo")
+        st.caption("This is a **synthetic** bank statement. Uploads are turned off here: the real app "
+                   "runs on your own laptop so statements never leave it.")
+        st.caption("Categories shown are the dataset's labels. The fine-tuned 1.5B categoriser "
+                   "(82% on unseen merchants) runs locally.")
+        st.caption(f"Ask is limited to {DEMO_QUESTION_LIMIT} questions per visitor.")
+    else:
+        st.markdown("#### Data")
+        source = st.radio("Data", ["My statement", "Fake demo"], label_visibility="collapsed",
+                          help="The demo uses its own database, so it never overwrites your real data.")
+        DB = REAL_DB if source == "My statement" else DEMO_DB
+        st.markdown("#### Categoriser")
+        mode = st.radio("Categoriser", ["Hybrid (fine-tuned model)", "Rules only (instant)"],
+                        label_visibility="collapsed",
+                        help="Hybrid: clear-cut rules + your fine-tuned model. Accurate, but ~15–25 s per "
+                             "transaction on a laptop CPU.")
+        model_name = st.selectbox("Model", ["qwen-1.5b", "qwen-0.5b"],
+                                  help="0.5B is faster on a laptop but less accurate (73% vs 82% on unseen shops).")
+        st.markdown("---")
+        st.caption("Runs locally. The Ask tab sends only your question and the column names to the "
+                   "language model, never your transactions.")
 
 data = load()
 period = f"{data.date.min()} – {data.date.max()}" if data is not None else "No data loaded"
 st.markdown(f"""<div class="topbar">
   <div class="brand"><div class="logo">F</div>
     <div><div class="name">FinSight</div><div class="tag">{source} · {period}</div></div></div>
-  <div class="badges"><span><b>●</b> Local</span><span>Qwen 1.5B · LoRA</span><span>Verified vs bank totals</span></div>
+  <div class="badges"><span><b>●</b> {"Public demo · synthetic data" if DEMO_MODE else "Local"}</span><span>Qwen 1.5B · LoRA</span><span>Verified vs bank totals</span></div>
 </div>""", unsafe_allow_html=True)
 
 tab_dash, tab_ask, tab_stmt = st.tabs(["Overview", "Ask", "Import"])
@@ -249,56 +283,61 @@ tab_dash, tab_ask, tab_stmt = st.tabs(["Overview", "Ask", "Import"])
 # Tab: Import
 # ---------------------------------------------------------------
 with tab_stmt:
-    left, right = st.columns([3, 2], gap="large")
-    with left:
-        head("Import a statement", "HDFC PDF → saved as My statement. The fake demo is saved separately.")
-        up = st.file_uploader("Statement PDF", type="pdf", label_visibility="collapsed")
-        pw = st.text_input("PDF password", type="password", placeholder="Leave empty if the PDF has none")
-        c1, c2 = st.columns(2)
-        go_upload = c1.button("Import PDF", disabled=up is None, type="primary", width="stretch")
-        go_demo = c2.button("Load fake demo statement", width="stretch")
-    with right:
-        head("Pipeline")
-        st.markdown(f"""<div class="muted">
-1&nbsp;&nbsp;Parse: word positions → rows (date-anchored)<br>
-2&nbsp;&nbsp;Verify: balance chain, count and totals vs the bank<br>
-3&nbsp;&nbsp;Categorise: clear-cut rules + fine-tuned model<br>
-4&nbsp;&nbsp;Store: local SQLite, read by Overview and Ask</div>""", unsafe_allow_html=True)
+    if DEMO_MODE:
+        head("Import is disabled in the public demo",
+             "Bank statements are private, so importing only works in the local app. "
+             "See the README to run it on your own laptop.")
+    else:
+        left, right = st.columns([3, 2], gap="large")
+        with left:
+            head("Import a statement", "HDFC PDF → saved as My statement. The fake demo is saved separately.")
+            up = st.file_uploader("Statement PDF", type="pdf", label_visibility="collapsed")
+            pw = st.text_input("PDF password", type="password", placeholder="Leave empty if the PDF has none")
+            c1, c2 = st.columns(2)
+            go_upload = c1.button("Import PDF", disabled=up is None, type="primary", width="stretch")
+            go_demo = c2.button("Load fake demo statement", width="stretch")
+        with right:
+            head("Pipeline")
+            st.markdown(f"""<div class="muted">
+      1&nbsp;&nbsp;Parse: word positions → rows (date-anchored)<br>
+      2&nbsp;&nbsp;Verify: balance chain, count and totals vs the bank<br>
+      3&nbsp;&nbsp;Categorise: clear-cut rules + fine-tuned model<br>
+      4&nbsp;&nbsp;Store: local SQLite, read by Overview and Ask</div>""", unsafe_allow_html=True)
 
-    if go_upload or go_demo:
-        path, tmp = DEMO_PDF, None
-        if go_upload:
-            # write the upload to a temp file, read it, delete it straight after
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-            tmp.write(up.getvalue())
-            tmp.close()
-            path = tmp.name
-        df = None
-        try:
-            with st.spinner("Reading the PDF..."):
-                df = parse_pdf(path, password=pw or "")
-        except ValueError as e:
-            st.error(f"Couldn't open the PDF: {e}")
-        except SystemExit as e:
-            st.error(str(e))
-        finally:
-            if tmp:
-                os.unlink(tmp.name)
-        if df is not None:
-            st.write("")
-            head(f"Read {len(df)} transactions", f"{df.date.min()} – {df.date.max()}")
-            cols = st.columns(3)
-            for col, (name, ok, detail) in zip(cols, run_checks(df)):
-                cls, word = ("pass", "PASS") if ok else (("skip", "N/A") if ok is None else ("fail", "FAIL"))
-                col.markdown(f'<div class="check"><span class="st {cls}">{word}</span>'
-                             f'<div class="t">{name}</div><div class="d">{detail}</div></div>',
-                             unsafe_allow_html=True)
-            st.write("")
-            df = categorise(df, mode, model_name)
-            target = DEMO_DB if go_demo else REAL_DB
-            save(df, target)
-            st.success(f"Saved as {'Fake demo' if go_demo else 'My statement'}. "
-                       "Select it under Data in the sidebar.")
+        if go_upload or go_demo:
+            path, tmp = DEMO_PDF, None
+            if go_upload:
+                # write the upload to a temp file, read it, delete it straight after
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+                tmp.write(up.getvalue())
+                tmp.close()
+                path = tmp.name
+            df = None
+            try:
+                with st.spinner("Reading the PDF..."):
+                    df = parse_pdf(path, password=pw or "")
+            except ValueError as e:
+                st.error(f"Couldn't open the PDF: {e}")
+            except SystemExit as e:
+                st.error(str(e))
+            finally:
+                if tmp:
+                    os.unlink(tmp.name)
+            if df is not None:
+                st.write("")
+                head(f"Read {len(df)} transactions", f"{df.date.min()} – {df.date.max()}")
+                cols = st.columns(3)
+                for col, (name, ok, detail) in zip(cols, run_checks(df)):
+                    cls, word = ("pass", "PASS") if ok else (("skip", "N/A") if ok is None else ("fail", "FAIL"))
+                    col.markdown(f'<div class="check"><span class="st {cls}">{word}</span>'
+                                 f'<div class="t">{name}</div><div class="d">{detail}</div></div>',
+                                 unsafe_allow_html=True)
+                st.write("")
+                df = categorise(df, mode, model_name)
+                target = DEMO_DB if go_demo else REAL_DB
+                save(df, target)
+                st.success(f"Saved as {'Fake demo' if go_demo else 'My statement'}. "
+                           "Select it under Data in the sidebar.")
 
 # ---------------------------------------------------------------
 # Tab: Overview
@@ -431,9 +470,11 @@ with tab_dash:
 with tab_ask:
     from env import load_env
     load_env()
-    key = os.environ.get("GROQ_API_KEY", "")
+    key = secret("GROQ_API_KEY") or os.environ.get("GROQ_API_KEY", "")
     if data is None:
         st.info(f"No {source.lower()} data yet. Use the Import tab.")
+    elif DEMO_MODE and not key.startswith("gsk_"):
+        st.info("The Ask tab isn't configured on this demo yet.")
     elif not key.startswith("gsk_"):
         key = st.text_input("Groq API key", type="password",
                             help="Or put GROQ_API_KEY=gsk_... in the .env file so you don't need to paste it.")
@@ -473,8 +514,17 @@ with tab_ask:
                     with st.expander("SQL"):
                         st.code(msg["sql"], language="sql")
 
-        q = st.chat_input("Ask about your statement") or picked
+        used = st.session_state.setdefault("questions_used", 0)
+        left_q = DEMO_QUESTION_LIMIT - used
+        if DEMO_MODE and left_q <= 0:
+            st.info(f"You've used all {DEMO_QUESTION_LIMIT} demo questions. Thanks for trying FinSight! "
+                    "Run it locally for unlimited questions.")
+            q = None
+        else:
+            q = st.chat_input("Ask about your statement" +
+                              (f"  ({left_q} questions left)" if DEMO_MODE else "")) or picked
         if q:
+            st.session_state.questions_used = used + 1
             chat.append({"role": "user", "text": q})
             with st.spinner("Thinking..."):
                 r = agent.ask(q)

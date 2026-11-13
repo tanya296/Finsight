@@ -1,9 +1,6 @@
+# App + parser + agent (also what Streamlit Cloud installs for the public demo)
 pdfplumber
 reportlab
 pandas
 streamlit
-# AI model (install CPU torch first):
-#   pip install torch --index-url https://download.pytorch.org/whl/cpu
-transformers
-peft
-accelerate
+altair
